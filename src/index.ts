@@ -1,64 +1,49 @@
-import "reflect-metadata";
+import 'reflect-metadata'
+import * as bodyParser from 'body-parser'
+import * as express from 'express'
+import { Request, Response } from 'express'
+import { container } from 'tsyringe'
+import { createConnection } from 'typeorm'
 import './bootstrap'
-import { createConnection } from "typeorm";
-import * as express from "express";
-import * as bodyParser from "body-parser";
-import { Request, Response } from "express";
-import { container } from "tsyringe";
-import { App } from "./types/app";
-import { Service } from "./enum/service";
+import { LogLevel } from './enum/log-level'
+import { Service } from './enum/service'
+import { BadRequestError } from './error/BadRequestError'
+import { NotFoundError } from './error/NotFoundError'
+import { Config } from './types/config'
+import { Logger } from './types/logger'
+import { error } from './utils'
 
-const config = container.resolve<App.Config.Service>(Service.Config)
+const config = container.resolve<Config.Service>(Service.Config)
+const logger = container.resolve<Logger.Service>(Service.Logger)
 
 createConnection().then(async connection => {
-    const { Routes } = require('./routes')
+  const { Routes } = require('./routes')
 
-    // create express app
-    const app = express();
-    app.use(bodyParser.json());
+  // create express app
+  const app = express()
+  app.use(bodyParser.json())
 
-    app.get('/', (req: Request, res: Response) => {
-        res.json({
-            a: 1,
-            b: 2
-        })
+  Routes.forEach(route => {
+    app[route.method](route.path, async (req: Request, res: Response, next: express.NextFunction) => {
+      try {
+        await route.action(req, res, next)
+      } catch (err) {
+        if (err?.name === 'ValidationError') {
+          error(new BadRequestError(err?.errors ?? []), req, res)
+        } else {
+          error(err, req, res)
+        }
+      }
     })
+  })
 
-    Routes.forEach(route => {
-        app[route.method](route.path, route.action)
-    })
+  app.all('*', (req: Request, res: Response) => {
+    error(new NotFoundError(), req, res)
+  })
 
-    // register express routes from defined application routes
-    // Routes.forEach(route => {
-    //     (app)[route.method](route.route, (req: Request, res: Response, next: Function) => {
-    //         const result = (new (route.controller as any))[route.action](req, res, next);
-    //         if (result instanceof Promise) {
-    //             result.then(result => result !== null && result !== undefined ? res.send(result) : undefined);
+  // start express server
+  app.listen(config.port, () => {
+    logger.log(LogLevel.Info, `Application running on port: ${config.port}`)
+  })
 
-    //         } else if (result !== null && result !== undefined) {
-    //             res.json(result);
-    //         }
-    //     });
-    // });
-
-    // setup express app here
-    // ...
-
-    // start express server
-    app.listen(config.port, () => {
-        console.log(`Application running on port: ${config.port}`)
-    });
-
-    // insert new users for test
-    // await connection.manager.save(connection.manager.create(User, {
-    //     firstName: "Timber",
-    //     lastName: "Saw",
-    //     age: 27
-    // }));
-    // await connection.manager.save(connection.manager.create(User, {
-    //     firstName: "Phantom",
-    //     lastName: "Assassin",
-    //     age: 24
-    // }));
-
-}).catch(error => console.log(error));
+}).catch(error => console.log(error))
